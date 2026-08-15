@@ -31,10 +31,23 @@ yarn-error.*
 *.pem
 
 # local env files
-.env*.local
+.env
+.env*
+
+# python
+finetune/.venv/
+__pycache__/
+*.pyc
 
 # typescript
 *.tsbuildinfo
+
+# derived training files, rebuilt by finetune/to_chat.py
+finetune/data/*.chat.jsonl
+
+# merged HF weights and ExecuTorch binaries (too large to commit)
+finetune/output/merged/
+*.pte
 
 # generated native folders
 /ios
