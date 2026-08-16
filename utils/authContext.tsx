@@ -7,79 +7,59 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { Session, User } from '../types/auth';
-
-const AUTH_STORAGE_KEY = '@voicebilling/local_auth';
-
-interface AuthResult {
-  error: string | null;
-}
-
-interface SignUpResult extends AuthResult {
-  needsEmailConfirmation: boolean;
-}
-
-interface StoredAuth {
-  session: Session;
-  user: User;
-}
+import { AppState } from 'react-native';
+import * as LocalAuthentication from 'expo-local-authentication';
+import { useSQLiteContext } from 'expo-sqlite';
+import { getRegisteredUser, insertUser } from '../db/queries';
+import type { AuthResult, RegisterInput, User } from '../types/auth';
+import {
+  getBiometricEnabled,
+  isValidPin,
+  setBiometricEnabled,
+  storePin,
+  verifyPin,
+} from './pinStore';
 
 interface AuthContextValue {
-  session: Session | null;
   user: User | null;
+  unlocked: boolean;
   loading: boolean;
-  signInWithPassword: (email: string, password: string) => Promise<AuthResult>;
-  signUpWithPassword: (
-    email: string,
-    password: string,
-    name: string,
-    companyName: string,
-  ) => Promise<SignUpResult>;
-  sendPhoneOtp: (phone: string, name?: string, companyName?: string) => Promise<AuthResult>;
-  verifyPhoneOtp: (phone: string, code: string) => Promise<AuthResult>;
-  signOut: () => Promise<void>;
+  hasRegisteredUser: boolean;
+  biometricAvailable: boolean;
+  biometricEnabled: boolean;
+  register: (input: RegisterInput) => Promise<AuthResult>;
+  unlockWithBiometrics: () => Promise<AuthResult>;
+  unlockWithPin: (pin: string) => Promise<AuthResult>;
+  lock: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
-function makeId(): string {
-  return `local-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-async function persistAuth(payload: StoredAuth | null): Promise<void> {
-  if (!payload) {
-    await AsyncStorage.removeItem(AUTH_STORAGE_KEY);
-    return;
-  }
-  await AsyncStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(payload));
+async function detectBiometrics(): Promise<boolean> {
+  const [hasHardware, isEnrolled] = await Promise.all([
+    LocalAuthentication.hasHardwareAsync(),
+    LocalAuthentication.isEnrolledAsync(),
+  ]);
+  return hasHardware && isEnrolled;
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
+  const db = useSQLiteContext();
   const [user, setUser] = useState<User | null>(null);
+  const [unlocked, setUnlocked] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [pendingPhoneProfile, setPendingPhoneProfile] = useState<{
-    phone: string;
-    name?: string;
-    companyName?: string;
-  } | null>(null);
+  const [biometricAvailable, setBiometricAvailable] = useState(false);
+  const [biometricEnabled, setBiometricEnabledState] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
 
-    AsyncStorage.getItem(AUTH_STORAGE_KEY)
-      .then((raw) => {
+    Promise.all([getRegisteredUser(db), getBiometricEnabled(), detectBiometrics()])
+      .then(([registered, biometricOn, biometricOk]) => {
         if (!isMounted) return;
-        if (raw) {
-          try {
-            const stored = JSON.parse(raw) as StoredAuth;
-            setSession(stored.session);
-            setUser(stored.user);
-          } catch {
-            // ignore corrupt storage
-          }
-        }
+        setUser(registered);
+        setBiometricEnabledState(biometricOn);
+        setBiometricAvailable(biometricOk);
         setLoading(false);
       })
       .catch(() => {
@@ -89,109 +69,130 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       isMounted = false;
     };
+  }, [db]);
+
+  const lock = useCallback(() => {
+    setUnlocked(false);
   }, []);
 
-  const establishSession = useCallback(
-    async (next: StoredAuth) => {
-      await persistAuth(next);
-      setSession(next.session);
-      setUser(next.user);
-    },
-    [],
-  );
-
-  const signInWithPassword = useCallback(
-    async (email: string, _password: string): Promise<AuthResult> => {
-      const id = makeId();
-      await establishSession({
-        session: { user: { id, email } },
-        user: {
-          id,
-          name: null,
-          companyName: null,
-          createdAt: new Date().toISOString(),
-        },
-      });
-      return { error: null };
-    },
-    [establishSession],
-  );
-
-  const signUpWithPassword = useCallback(
-    async (
-      email: string,
-      _password: string,
-      name: string,
-      companyName: string,
-    ): Promise<SignUpResult> => {
-      const id = makeId();
-      await establishSession({
-        session: { user: { id, email } },
-        user: {
-          id,
-          name: name.trim() || null,
-          companyName: companyName.trim() || null,
-          createdAt: new Date().toISOString(),
-        },
-      });
-      return { error: null, needsEmailConfirmation: false };
-    },
-    [establishSession],
-  );
-
-  const sendPhoneOtp = useCallback(
-    async (phone: string, name?: string, companyName?: string): Promise<AuthResult> => {
-      setPendingPhoneProfile({ phone, name, companyName });
-      return { error: null };
-    },
-    [],
-  );
-
-  const verifyPhoneOtp = useCallback(
-    async (phone: string, _code: string): Promise<AuthResult> => {
-      const profile = pendingPhoneProfile?.phone === phone ? pendingPhoneProfile : { phone };
-      const id = makeId();
-      await establishSession({
-        session: { user: { id, phone } },
-        user: {
-          id,
-          name: profile.name?.trim() || null,
-          companyName: profile.companyName?.trim() || null,
-          createdAt: new Date().toISOString(),
-        },
-      });
-      setPendingPhoneProfile(null);
-      return { error: null };
-    },
-    [establishSession, pendingPhoneProfile],
-  );
-
-  const signOut = useCallback(async () => {
-    await persistAuth(null);
-    setSession(null);
-    setUser(null);
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'background') {
+        setUnlocked(false);
+      }
+    });
+    return () => subscription.remove();
   }, []);
+
+  const register = useCallback(
+    async (input: RegisterInput): Promise<AuthResult> => {
+      const name = input.name.trim();
+      const companyName = input.companyName.trim();
+      if (!name) {
+        return { error: 'Please enter your name.' };
+      }
+      if (!companyName) {
+        return { error: 'Please enter your company name.' };
+      }
+      if (!isValidPin(input.pin)) {
+        return { error: 'PIN must be 4 to 6 digits.' };
+      }
+
+      const existing = await getRegisteredUser(db);
+      if (existing) {
+        return { error: 'This device is already set up.' };
+      }
+
+      try {
+        await storePin(input.pin);
+        const enableBiometrics = input.enableBiometrics && (await detectBiometrics());
+        await setBiometricEnabled(enableBiometrics);
+        const created = await insertUser(db, {
+          name,
+          companyName,
+          email: input.email?.trim() || null,
+          phone: input.phone?.trim() || null,
+        });
+        setUser(created);
+        setBiometricEnabledState(enableBiometrics);
+        setUnlocked(true);
+        return { error: null };
+      } catch {
+        return { error: 'Could not finish setup. Please try again.' };
+      }
+    },
+    [db],
+  );
+
+  const unlockWithBiometrics = useCallback(async (): Promise<AuthResult> => {
+    if (!user) {
+      return { error: 'No account on this device.' };
+    }
+    if (!biometricEnabled) {
+      return { error: 'Face ID is not enabled.' };
+    }
+
+    const available = await detectBiometrics();
+    setBiometricAvailable(available);
+    if (!available) {
+      return { error: 'Face ID is not available. Use your PIN.' };
+    }
+
+    const result = await LocalAuthentication.authenticateAsync({
+      promptMessage: 'Unlock Voice Invoice',
+      cancelLabel: 'Use PIN',
+      disableDeviceFallback: true,
+    });
+
+    if (!result.success) {
+      return { error: 'Face ID cancelled. Enter your PIN.' };
+    }
+
+    setUnlocked(true);
+    return { error: null };
+  }, [biometricEnabled, user]);
+
+  const unlockWithPin = useCallback(
+    async (pin: string): Promise<AuthResult> => {
+      if (!user) {
+        return { error: 'No account on this device.' };
+      }
+      if (!isValidPin(pin)) {
+        return { error: 'PIN must be 4 to 6 digits.' };
+      }
+      const matches = await verifyPin(pin);
+      if (!matches) {
+        return { error: 'Incorrect PIN.' };
+      }
+      setUnlocked(true);
+      return { error: null };
+    },
+    [user],
+  );
 
   const value = useMemo<AuthContextValue>(
     () => ({
-      session,
       user,
+      unlocked,
       loading,
-      signInWithPassword,
-      signUpWithPassword,
-      sendPhoneOtp,
-      verifyPhoneOtp,
-      signOut,
+      hasRegisteredUser: user != null,
+      biometricAvailable,
+      biometricEnabled,
+      register,
+      unlockWithBiometrics,
+      unlockWithPin,
+      lock,
     }),
     [
-      session,
       user,
+      unlocked,
       loading,
-      signInWithPassword,
-      signUpWithPassword,
-      sendPhoneOtp,
-      verifyPhoneOtp,
-      signOut,
+      biometricAvailable,
+      biometricEnabled,
+      register,
+      unlockWithBiometrics,
+      unlockWithPin,
+      lock,
     ],
   );
 

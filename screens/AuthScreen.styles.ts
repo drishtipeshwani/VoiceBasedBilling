@@ -26,30 +26,6 @@ export const styles = StyleSheet.create({
     marginTop: 6,
     marginBottom: 24,
   },
-  methodToggle: {
-    flexDirection: 'row',
-    backgroundColor: '#EAEAF2',
-    borderRadius: 12,
-    padding: 4,
-    marginBottom: 20,
-  },
-  methodTab: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 9,
-    alignItems: 'center',
-  },
-  methodTabActive: {
-    backgroundColor: '#FFFFFF',
-  },
-  methodTabText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#6E6E80',
-  },
-  methodTabTextActive: {
-    color: '#1C1C28',
-  },
   input: {
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
@@ -61,14 +37,34 @@ export const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E5E5EC',
   },
-  errorText: {
-    color: '#D64545',
+  pinInput: {
+    marginTop: 16,
+  },
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E5E5EC',
+  },
+  switchLabel: {
+    fontSize: 15,
+    color: '#1C1C28',
+    fontWeight: '500',
+  },
+  hintText: {
     fontSize: 13,
+    color: '#6E6E80',
     marginBottom: 12,
     textAlign: 'center',
   },
-  infoText: {
-    color: '#2E7D32',
+  errorText: {
+    color: '#D64545',
     fontSize: 13,
     marginBottom: 12,
     textAlign: 'center',

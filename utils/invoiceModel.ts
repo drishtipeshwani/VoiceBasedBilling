@@ -1,24 +1,16 @@
-import { LFM2_5_350M_QUANTIZED } from 'react-native-executorch';
+import { LFM2_5_350M } from 'react-native-executorch';
 
-/**
- * Optional URL or file:// path to a merged+exported invoice LoRA .pte.
- * When unset, the stock quantized LFM2.5-350M preset is used.
- *
- * After `python finetune/merge_lora.py` and ExecuTorch export, set this in
- * `.env` (Expo inlines EXPO_PUBLIC_* at bundle time):
- *
- *   EXPO_PUBLIC_INVOICE_PTE=file:///absolute/path/to/invoice_lfm2_5_350m_8da4w.pte
- *
- * Or host the file and use https://…
- */
-const FINETUNED_PTE = process.env.EXPO_PUBLIC_INVOICE_PTE;
+const DEFAULT_FINETUNED_PTE =
+  'https://huggingface.co/drishti09/LFM-350M-VoiceBilling-FineTuned/resolve/main/invoice_lfm2_5_350m_fp16.pte';
 
-export const usesFinetunedInvoiceLlm = Boolean(FINETUNED_PTE);
+const envPte = process.env.EXPO_PUBLIC_INVOICE_PTE;
+const FINETUNED_PTE =
+  envPte?.startsWith('https://') ? envPte : DEFAULT_FINETUNED_PTE;
 
-export const INVOICE_LLM_MODEL = FINETUNED_PTE
-  ? {
-      ...LFM2_5_350M_QUANTIZED,
-      modelName: 'lfm2.5-350m-quantized' as const,
-      modelSource: FINETUNED_PTE,
-    }
-  : LFM2_5_350M_QUANTIZED;
+export const usesFinetunedInvoiceLlm = true;
+
+export const INVOICE_LLM_MODEL = {
+  ...LFM2_5_350M,
+  modelName: 'lfm2.5-350m' as const,
+  modelSource: FINETUNED_PTE,
+};

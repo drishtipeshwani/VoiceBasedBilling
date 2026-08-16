@@ -1,8 +1,12 @@
+import { useEffect, useState } from 'react';
 import { FlatList, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { dummyInvoices } from '../data/dummyInvoices';
+import { useSQLiteContext } from 'expo-sqlite';
+import { listInvoices } from '../db/queries';
 import type { InvoiceSummary } from '../types/accounts';
+import { useAuth } from '../utils/authContext';
 import { formatAmount } from '../utils/currency';
+import { useShopData } from '../utils/shopDataContext';
 import { styles } from './AccountsScreen.styles';
 
 function formatDate(isoDate: string): string {
@@ -27,6 +31,19 @@ function InvoiceRow({ invoice }: { invoice: InvoiceSummary }) {
 }
 
 export default function AccountsScreen() {
+  const db = useSQLiteContext();
+  const { user } = useAuth();
+  const { dataVersion } = useShopData();
+  const [invoices, setInvoices] = useState<InvoiceSummary[]>([]);
+
+  useEffect(() => {
+    if (!user) {
+      setInvoices([]);
+      return;
+    }
+    void listInvoices(db, user.id).then(setInvoices);
+  }, [db, user, dataVersion]);
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
       <View style={styles.header}>
@@ -35,7 +52,7 @@ export default function AccountsScreen() {
       </View>
 
       <FlatList
-        data={dummyInvoices}
+        data={invoices}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.listContent}
         renderItem={({ item }) => <InvoiceRow invoice={item} />}

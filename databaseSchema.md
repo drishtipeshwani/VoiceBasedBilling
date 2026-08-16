@@ -11,7 +11,7 @@ Each User will have
 Each Invoice 
 - unique id/ invoice no. (can start with 0)
 - Customer Name
-- Array of invoice items - [name,quantity,discount%,price per item]
+- Array of invoice items - [name,quantity,discount%,price per item,total discount, date]
 - Total Amount
 
 Each Stock Item

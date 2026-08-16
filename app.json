@@ -9,7 +9,10 @@
     "ios": {
       "supportsTablet": true,
       "deploymentTarget": "17.0",
-      "bundleIdentifier": "com.anonymous.voicebillingapp"
+      "bundleIdentifier": "com.anonymous.voicebillingapp",
+      "infoPlist": {
+        "NSFaceIDUsageDescription": "Allow $(PRODUCT_NAME) to use Face ID to unlock your invoices."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -44,6 +47,14 @@
         {
           "microphonePermission": "Allow $(PRODUCT_NAME) to use the microphone for voice commands.",
           "speechRecognitionPermission": "Allow $(PRODUCT_NAME) to use speech recognition for voice billing."
+        }
+      ],
+      "expo-sqlite",
+      "expo-secure-store",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Allow $(PRODUCT_NAME) to use Face ID to unlock your invoices."
         }
       ]
     ]

@@ -47,6 +47,7 @@ finetune/data/*.chat.jsonl
 
 # merged HF weights and ExecuTorch binaries (too large to commit)
 finetune/output/merged/
+finetune/output/*.pth
 *.pte
 
 # generated native folders

@@ -151,31 +151,93 @@ which is why `optimum-executorch` does not list LFM2 among its supported
 architectures and why ExecuTorch ships a dedicated `examples/models/lfm2`
 recipe. Use that recipe.
 
-From an ExecuTorch checkout, convert the merged weights to the Meta
-checkpoint layout, then export:
+Install ExecuTorch with pip in a **separate** venv. Do **not** install it
+into `finetune/.venv`: it pulls its own torch (`>=2.12`) and would replace
+the torch 2.13 that training and eval run on.
+
+```bash
+python3 -m venv ~/et-export
+source ~/et-export/bin/activate
+pip install executorch safetensors
+```
+
+ExecuTorch requires Python 3.10–3.13 (not 3.14). YAML configs ship in the
+wheel; download `lfm2_5_350m_config.json` from the matching ExecuTorch
+tag if it is missing.
+
+The LFM2 export configs are YAML/JSON files that `export_llm` reads from
+disk. Grab just that folder (no compile, no submodules):
+
+```bash
+git clone --depth 1 --filter=blob:none --sparse \
+  https://github.com/pytorch/executorch.git ~/executorch
+cd ~/executorch
+git sparse-checkout set examples/models/lfm2
+```
+
+Then convert the merged weights and export. Use the pip venv's `python`,
+and pass absolute paths for the configs:
 
 ```bash
 python -m executorch.examples.models.lfm2.convert_weights \
   /abs/path/to/voicebillingapp/finetune/output/merged \
   invoice_lfm2_5_350m.pth
 
-python -m extension.llm.export.export_llm \
-  --config examples/models/lfm2/config/lfm2_xnnpack_q8da4w.yaml \
+# Eval-equivalent: no weight quantization, fp16, 2048 context.
+# Matches finetune/eval_llm.py much more closely than 8da4w.
+# Output is ~800MB (over the 512MB require() asset limit; load via https).
+python -m executorch.extension.llm.export.export_llm \
+  --config ~/executorch/examples/models/lfm2/config/lfm2_xnnpack_fp32.yaml \
   +base.model_class="lfm2_5_350m" \
-  +base.params="examples/models/lfm2/config/lfm2_5_350m_config.json" \
+  +base.params="$HOME/executorch/examples/models/lfm2/config/lfm2_5_350m_config.json" \
   +base.checkpoint="invoice_lfm2_5_350m.pth" \
+  model.dtype_override=fp16 \
+  +export.max_seq_length=2048 \
+  +export.max_context_length=2048 \
+  +export.output_name="invoice_lfm2_5_350m_fp16.pte"
+```
+
+The fp32 YAML has no `quantization:` block. `model.dtype_override=fp16`
+overrides its default `fp32` cast so the file stays under 1GB (true fp32
+is ~1.5GB). This is the same unquantized recipe Software Mansion ships
+as `LFM2_5_350M`.
+
+The default export window is **128 tokens**. The invoice system prompt plus
+chat template is already ~184 tokens, so a 128-token `.pte` loads but fails
+on `generate()` with an empty reply. Always set `max_seq_length` /
+`max_context_length` as above.
+
+A 4-bit `8da4w` export is smaller (~430MB) but destroys LoRA JSON quality
+on this 350M adapter. Only use it if you need the `require()` asset path:
+
+```bash
+python -m executorch.extension.llm.export.export_llm \
+  --config ~/executorch/examples/models/lfm2/config/lfm2_xnnpack_q8da4w.yaml \
+  +base.model_class="lfm2_5_350m" \
+  +base.params="$HOME/executorch/examples/models/lfm2/config/lfm2_5_350m_config.json" \
+  +base.checkpoint="invoice_lfm2_5_350m.pth" \
+  +export.max_seq_length=2048 \
+  +export.max_context_length=2048 \
   +export.output_name="invoice_lfm2_5_350m_8da4w.pte"
 ```
+
+Building from source (`./install_executorch.sh`) is only needed if pip
+export fails, or you want extra backends (MLX, Core ML, Qualcomm).
 
 `convert_weights` reads a single `model.safetensors`, so do not shard the
 merged checkpoint when saving it.
 
-Point the app at that binary (tokenizer stays the stock LFM2.5-350M one):
+The eval-equivalent `.pte` is ~800MB, over the 512MB `require()` limit.
+Host it on Hugging Face (or any **https** URL). The tokenizer stays the
+stock LFM2.5-350M one from Software Mansion.
 
 ```bash
 # .env  (Expo inlines EXPO_PUBLIC_* at bundle time)
-EXPO_PUBLIC_INVOICE_PTE=file:///absolute/path/to/invoice_lfm2_5_350m_8da4w.pte
+EXPO_PUBLIC_INVOICE_PTE=https://huggingface.co/drishti09/LFM-350M-VoiceBilling-FineTuned/resolve/main/invoice_lfm2_5_350m_fp16.pte
 ```
 
-`HomeScreen` then uses `INVOICE_SYSTEM_PROMPT_SHORT` (the training prompt)
-instead of the long few-shot prompt. Rebuild/reload after changing `.env`.
+If `EXPO_PUBLIC_INVOICE_PTE` is unset, the app uses that Hugging Face URL
+by default. `HomeScreen` then uses `INVOICE_SYSTEM_PROMPT_SHORT` (the
+training prompt) instead of the long few-shot prompt. Rebuild/reload after
+changing `.env`. The first device load downloads the `.pte` into the app
+documents directory.

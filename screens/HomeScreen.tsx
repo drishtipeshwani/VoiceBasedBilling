@@ -16,6 +16,7 @@ import {
 import {
   fixAndValidateStructuredOutput,
 } from 'react-native-executorch';
+import { useSQLiteContext } from 'expo-sqlite';
 import InvoiceCard from '../components/InvoiceCard';
 import { emptyInvoice } from '../data/emptyInvoice';
 import { Invoice } from '../types/invoice';
@@ -23,9 +24,11 @@ import {
   AgentResponseSchema,
   type AgentResponse,
 } from '../types/agentResponse';
+import { SaveInvoiceError, saveInvoice } from '../db/queries';
 import { buildInvoiceHtml } from '../utils/invoiceHtml';
 import { useAuth } from '../utils/authContext';
 import { useOnDeviceAI } from '../utils/OnDeviceAIProvider';
+import { useShopData } from '../utils/shopDataContext';
 import {
   applyAgentResponse,
   describeAgentResponse,
@@ -46,16 +49,22 @@ interface CommandStatus {
 }
 
 export default function HomeScreen() {
-  const { signOut } = useAuth();
+  const { user, lock, unlocked } = useAuth();
   const { llm } = useOnDeviceAI();
+  const db = useSQLiteContext();
+  const { bumpData } = useShopData();
 
-  const [invoice, setInvoice] = useState<Invoice>(emptyInvoice);
+  const [invoice, setInvoice] = useState<Invoice>(() => ({
+    ...emptyInvoice,
+    companyName: user?.companyName ?? '',
+  }));
   const [isSessionActive, setIsSessionActive] = useState(false);
   const [heardText, setHeardText] = useState('');
   const [commandStatus, setCommandStatus] = useState<CommandStatus | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [pdfError, setPdfError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   const sessionActiveRef = useRef(false);
   const committedTextRef = useRef('');
@@ -85,6 +94,14 @@ export default function HomeScreen() {
   useEffect(() => {
     invoiceRef.current = invoice;
   }, [invoice]);
+
+  useEffect(() => {
+    const companyName = user?.companyName ?? '';
+    if (!companyName) return;
+    setInvoice((current) =>
+      current.companyName ? current : { ...current, companyName },
+    );
+  }, [user?.companyName]);
 
   const modelsReady = llm.isReady;
   const downloadProgress = llm.downloadProgress;
@@ -135,7 +152,7 @@ export default function HomeScreen() {
         const systemPrompt = usesFinetunedInvoiceLlm
           ? INVOICE_SYSTEM_PROMPT_SHORT
           : INVOICE_SYSTEM_PROMPT;
-        const reply = await currentLlm.generate([
+        const messages = [
           { role: 'system' as const, content: systemPrompt },
           ...(lastAgentResponse
             ? [
@@ -146,9 +163,20 @@ export default function HomeScreen() {
               ]
             : []),
           { role: 'user' as const, content: input },
-        ]);
-
-        console.log('[HomeScreen] Agent raw output:', reply);
+        ];
+        console.log(
+          '[HomeScreen] LLM generate start',
+          usesFinetunedInvoiceLlm ? 'finetuned' : 'stock',
+          'turns:',
+          messages.length,
+        );
+        const startedAt = Date.now();
+        const reply = await currentLlm.generate(messages);
+        console.log(
+          '[HomeScreen] Agent raw output',
+          `(${Date.now() - startedAt}ms, ${reply.length} chars):`,
+          reply,
+        );
         const formattedResponse = fixAndValidateStructuredOutput(
           reply,
           AgentResponseSchema,
@@ -200,6 +228,10 @@ export default function HomeScreen() {
         scheduleCommandStatusClear();
       } catch (error) {
         console.error('[HomeScreen] LLM generate failed:', error);
+        console.error(
+          '[HomeScreen] Partial LLM output:',
+          currentLlm.response || '(empty)',
+        );
         setCommandStatus({
           message: 'LLM inference failed',
           isError: true,
@@ -271,6 +303,12 @@ export default function HomeScreen() {
     clearSafetyTimer();
     ExpoSpeechRecognitionModule.stop();
   }, [clearSafetyTimer]);
+
+  useEffect(() => {
+    if (!unlocked) {
+      endSession();
+    }
+  }, [unlocked, endSession]);
 
   const scheduleSafetyCap = useCallback(() => {
     clearSafetyTimer();
@@ -365,17 +403,42 @@ export default function HomeScreen() {
     }
   };
 
-  const handleSignOut = () => {
+  const handleLock = () => {
     endSession();
-    signOut();
+    lock();
   };
 
-  const handleSaveInvoice = () => {
-    // The next invoice must not inherit this one's item, or an ellipsis like
-    // "make its price 20" would attach to an item that is no longer on screen.
-    clearAgentContext();
-    setCommandStatus({ message: 'Invoice saved (demo)', isError: false });
-    scheduleCommandStatusClear();
+  const handleSaveInvoice = async () => {
+    if (!user) {
+      setCommandStatus({ message: 'Unlock the app to save invoices.', isError: true });
+      scheduleCommandStatusClear();
+      return;
+    }
+    if (isSaving) {
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      await saveInvoice(db, user.id, invoice);
+      clearAgentContext();
+      setInvoice({
+        ...emptyInvoice,
+        companyName: user.companyName,
+      });
+      bumpData();
+      setCommandStatus({ message: 'Invoice saved', isError: false });
+      scheduleCommandStatusClear();
+    } catch (error) {
+      const message =
+        error instanceof SaveInvoiceError
+          ? error.message
+          : 'Could not save the invoice. Please try again.';
+      setCommandStatus({ message, isError: true });
+      scheduleCommandStatusClear();
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleDownloadPdf = async () => {
@@ -417,23 +480,28 @@ export default function HomeScreen() {
         </View>
         <View style={styles.headerActions}>
           <Pressable
-            onPress={handleSignOut}
+            onPress={handleLock}
             style={({ pressed }) => [
               styles.signOutButton,
               pressed && styles.signOutButtonPressed,
             ]}
           >
-            <Text style={styles.signOutText}>Sign out</Text>
+            <Text style={styles.signOutText}>Lock</Text>
           </Pressable>
           <View style={styles.actionButtonsRow}>
             <Pressable
               onPress={handleSaveInvoice}
+              disabled={isSaving}
               style={({ pressed }) => [
                 styles.saveButton,
                 pressed && styles.saveButtonPressed,
               ]}
             >
-              <Text style={styles.saveButtonText}>Save</Text>
+              {isSaving ? (
+                <ActivityIndicator size="small" color="#4C6FFF" />
+              ) : (
+                <Text style={styles.saveButtonText}>Save</Text>
+              )}
             </Pressable>
             <Pressable
               onPress={handleDownloadPdf}

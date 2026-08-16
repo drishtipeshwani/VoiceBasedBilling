@@ -1,8 +1,12 @@
+import { useEffect, useState } from 'react';
 import { FlatList, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { dummyCustomers } from '../data/dummyCustomers';
+import { useSQLiteContext } from 'expo-sqlite';
+import { listCustomers } from '../db/queries';
 import type { CustomerLedgerEntry } from '../types/ledger';
+import { useAuth } from '../utils/authContext';
 import { formatAmount } from '../utils/currency';
+import { useShopData } from '../utils/shopDataContext';
 import { styles } from './LedgerScreen.styles';
 
 function CustomerRow({ customer }: { customer: CustomerLedgerEntry }) {
@@ -21,6 +25,19 @@ function CustomerRow({ customer }: { customer: CustomerLedgerEntry }) {
 }
 
 export default function LedgerScreen() {
+  const db = useSQLiteContext();
+  const { user } = useAuth();
+  const { dataVersion } = useShopData();
+  const [customers, setCustomers] = useState<CustomerLedgerEntry[]>([]);
+
+  useEffect(() => {
+    if (!user) {
+      setCustomers([]);
+      return;
+    }
+    void listCustomers(db, user.id).then(setCustomers);
+  }, [db, user, dataVersion]);
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
       <View style={styles.header}>
@@ -29,7 +46,7 @@ export default function LedgerScreen() {
       </View>
 
       <FlatList
-        data={dummyCustomers}
+        data={customers}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.listContent}
         renderItem={({ item }) => <CustomerRow customer={item} />}
