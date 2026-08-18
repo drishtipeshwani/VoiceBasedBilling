@@ -1,6 +1,7 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
+import { backfillInvoiceSnapshots, dedupeCustomersAndStock } from './queries';
 
-const DATABASE_VERSION = 1;
+const DATABASE_VERSION = 4;
 
 export async function migrateDbIfNeeded(db: SQLiteDatabase): Promise<void> {
   await db.execAsync('PRAGMA foreign_keys = ON;');
@@ -49,6 +50,9 @@ CREATE TABLE invoices (
   total_amount REAL NOT NULL,
   invoice_date TEXT NOT NULL,
   created_at TEXT NOT NULL,
+  discount_percent REAL,
+  discount_amount REAL,
+  snapshot TEXT,
   UNIQUE (user_id, invoice_number)
 );
 CREATE TABLE invoice_items (
@@ -58,11 +62,49 @@ CREATE TABLE invoice_items (
   quantity REAL,
   discount_percent REAL,
   price_per_item REAL,
-  discount_amount REAL,
-  item_date TEXT NOT NULL
+  discount_amount REAL
 );
 `);
-    currentDbVersion = 1;
+    currentDbVersion = 3;
+  }
+
+  if (currentDbVersion === 1) {
+    await db.execAsync(`
+ALTER TABLE invoices ADD COLUMN discount_percent REAL;
+ALTER TABLE invoices ADD COLUMN discount_amount REAL;
+`);
+    currentDbVersion = 2;
+  }
+
+  if (currentDbVersion === 2) {
+    await db.execAsync('ALTER TABLE invoices ADD COLUMN snapshot TEXT;');
+    await db.execAsync(`
+PRAGMA foreign_keys = OFF;
+CREATE TABLE invoice_items_new (
+  id TEXT PRIMARY KEY NOT NULL,
+  invoice_id TEXT NOT NULL REFERENCES invoices (id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  quantity REAL,
+  discount_percent REAL,
+  price_per_item REAL,
+  discount_amount REAL
+);
+INSERT INTO invoice_items_new (
+  id, invoice_id, name, quantity, discount_percent, price_per_item, discount_amount
+)
+SELECT id, invoice_id, name, quantity, discount_percent, price_per_item, discount_amount
+FROM invoice_items;
+DROP TABLE invoice_items;
+ALTER TABLE invoice_items_new RENAME TO invoice_items;
+PRAGMA foreign_keys = ON;
+`);
+    await backfillInvoiceSnapshots(db);
+    currentDbVersion = 3;
+  }
+
+  if (currentDbVersion === 3) {
+    await dedupeCustomersAndStock(db);
+    currentDbVersion = 4;
   }
 
   await db.execAsync(`PRAGMA user_version = ${DATABASE_VERSION}`);

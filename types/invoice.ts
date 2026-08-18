@@ -14,9 +14,21 @@ export const InvoiceSchema = z.object({
   companyName: z.string(),
   customerName: z.string(),
   items: z.array(InvoiceItemSchema),
+  /** Display date as DD/MM/YYYY after the app resolves the spoken phrase. */
+  invoiceDate: z.string().nullable(),
+  invoiceDiscountPercent: z.number().min(0).max(100).nullable(),
+  invoiceDiscountAmount: z.number().nullable(),
 });
 
 export type Invoice = z.infer<typeof InvoiceSchema>;
+
+export function serializeInvoiceSnapshot(invoice: Invoice): string {
+  return JSON.stringify(invoice);
+}
+
+export function parseInvoiceSnapshot(raw: string): Invoice {
+  return InvoiceSchema.parse(JSON.parse(raw));
+}
 
 export function getItemTotal(item: InvoiceItem): number {
   const quantity = item.quantity ?? 0;
@@ -27,6 +39,17 @@ export function getItemTotal(item: InvoiceItem): number {
   return gross - discountAmount - (gross * discountPercent) / 100;
 }
 
-export function getInvoiceTotal(invoice: Invoice): number {
+export function getInvoiceSubtotal(invoice: Invoice): number {
   return invoice.items.reduce((sum, item) => sum + getItemTotal(item), 0);
+}
+
+export function getInvoiceDiscount(invoice: Invoice): number {
+  const subtotal = getInvoiceSubtotal(invoice);
+  const percent = invoice.invoiceDiscountPercent ?? 0;
+  const amount = invoice.invoiceDiscountAmount ?? 0;
+  return (subtotal * percent) / 100 + amount;
+}
+
+export function getInvoiceTotal(invoice: Invoice): number {
+  return Math.max(0, getInvoiceSubtotal(invoice) - getInvoiceDiscount(invoice));
 }

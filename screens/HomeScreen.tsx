@@ -9,48 +9,44 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
-import {
-  ExpoSpeechRecognitionModule,
-  useSpeechRecognitionEvent,
-} from 'expo-speech-recognition';
-import {
-  fixAndValidateStructuredOutput,
-} from 'react-native-executorch';
 import { useSQLiteContext } from 'expo-sqlite';
 import InvoiceCard from '../components/InvoiceCard';
+import AddCustomerComposer from '../components/AddCustomerComposer';
+import AddStockComposer from '../components/AddStockComposer';
+import SaveButton from '../components/SaveButton';
 import { emptyInvoice } from '../data/emptyInvoice';
 import { Invoice } from '../types/invoice';
 import {
-  AgentResponseSchema,
-  type AgentResponse,
-} from '../types/agentResponse';
-import { SaveInvoiceError, saveInvoice } from '../db/queries';
+  AgentActionResponseSchema,
+  type Action,
+  type AgentActionResponse,
+} from '../types/agentActionResponse';
+import {
+  SaveInvoiceError,
+  customerExists,
+  saveInvoice,
+  stockItemExists,
+} from '../db/queries';
 import { buildInvoiceHtml } from '../utils/invoiceHtml';
 import { useAuth } from '../utils/authContext';
-import { useOnDeviceAI } from '../utils/OnDeviceAIProvider';
 import { useShopData } from '../utils/shopDataContext';
 import {
-  applyAgentResponse,
-  describeAgentResponse,
+  describeInvoiceAction,
+  isIncompleteInvoiceAction,
+  isSaveInvoiceAction,
+  isUnknownInvoiceAction,
 } from '../utils/applyInvoiceAction';
 import {
-  INVOICE_SYSTEM_PROMPT,
-  INVOICE_SYSTEM_PROMPT_SHORT,
-} from '../utils/invoiceLlm';
-import { usesFinetunedInvoiceLlm } from '../utils/invoiceModel';
+  processGatedInvoiceActions,
+  type EntityPrompt,
+} from '../utils/invoiceEntityGate';
+import { INVOICE_SYSTEM_PROMPT_SHORT } from '../utils/invoiceSystemPrompt';
+import { waitForSaveFeedback } from '../utils/saveFeedback';
+import { useVoiceAgent } from '../utils/useVoiceAgent';
 import { styles } from './HomeScreen.styles';
-
-const MAX_SESSION_DURATION_MS = 60000;
-const COMMAND_STATUS_DISPLAY_MS = 2500;
-
-interface CommandStatus {
-  message: string;
-  isError: boolean;
-}
 
 export default function HomeScreen() {
   const { user, lock, unlocked } = useAuth();
-  const { llm } = useOnDeviceAI();
   const db = useSQLiteContext();
   const { bumpData } = useShopData();
 
@@ -58,42 +54,26 @@ export default function HomeScreen() {
     ...emptyInvoice,
     companyName: user?.companyName ?? '',
   }));
-  const [isSessionActive, setIsSessionActive] = useState(false);
-  const [heardText, setHeardText] = useState('');
-  const [commandStatus, setCommandStatus] = useState<CommandStatus | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [pdfError, setPdfError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [activePrompt, setActivePrompt] = useState<EntityPrompt | null>(null);
+  const [composerKind, setComposerKind] = useState<EntityPrompt['kind'] | null>(null);
 
-  const sessionActiveRef = useRef(false);
-  const committedTextRef = useRef('');
   const invoiceRef = useRef(invoice);
-  const safetyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const commandStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const llmRef = useRef(llm);
-  const utteranceQueueRef = useRef<string[]>([]);
-  const isProcessingQueueRef = useRef(false);
-  const lastSuccessfulAgentResponseRef = useRef<AgentResponse | null>(null);
-
-  useEffect(() => {
-    llmRef.current = llm;
-  }, [llm]);
-
-  useEffect(() => {
-    if (!llm.isReady) {
-      return;
-    }
-    llm.configure({
-      generationConfig: {
-        temperature: 0,
-      },
-    });
-  }, [llm.isReady, llm.configure]);
+  const activePromptRef = useRef<EntityPrompt | null>(null);
+  const promptQueueRef = useRef<EntityPrompt[]>([]);
+  const composerSavedRef = useRef(false);
+  const persistInvoiceRef = useRef<() => Promise<boolean>>(async () => false);
+  const resumeFromPromptRef = useRef<(applyPending: boolean) => void>(() => undefined);
 
   useEffect(() => {
     invoiceRef.current = invoice;
   }, [invoice]);
+
+  useEffect(() => {
+    activePromptRef.current = activePrompt;
+  }, [activePrompt]);
 
   useEffect(() => {
     const companyName = user?.companyName ?? '';
@@ -103,206 +83,140 @@ export default function HomeScreen() {
     );
   }, [user?.companyName]);
 
-  const modelsReady = llm.isReady;
-  const downloadProgress = llm.downloadProgress;
-  const modelError = llm.error?.message ?? null;
-
-  const clearSafetyTimer = useCallback(() => {
-    if (safetyTimerRef.current) {
-      clearTimeout(safetyTimerRef.current);
-      safetyTimerRef.current = null;
-    }
-  }, []);
-
-  const clearTranscript = useCallback(() => {
-    committedTextRef.current = '';
-    setHeardText('');
-  }, []);
-
-  const clearUtteranceQueue = useCallback(() => {
-    utteranceQueueRef.current = [];
-  }, []);
-
-  const clearAgentContext = useCallback(() => {
-    lastSuccessfulAgentResponseRef.current = null;
-  }, []);
-
-  const scheduleCommandStatusClear = useCallback(() => {
-    if (commandStatusTimerRef.current) {
-      clearTimeout(commandStatusTimerRef.current);
-    }
-    commandStatusTimerRef.current = setTimeout(() => {
-      setCommandStatus(null);
-    }, COMMAND_STATUS_DISPLAY_MS);
-  }, []);
-
-  const processUtterance = useCallback(
-    async (input: string) => {
-      const currentLlm = llmRef.current;
-      if (!currentLlm.isReady) {
-        return;
-      }
-
-      console.log('[HomeScreen] Agent input:', input);
-
-      try {
-        setCommandStatus({ message: 'Running on-device LLM…', isError: false });
-
-        const lastAgentResponse = lastSuccessfulAgentResponseRef.current;
-        const systemPrompt = usesFinetunedInvoiceLlm
-          ? INVOICE_SYSTEM_PROMPT_SHORT
-          : INVOICE_SYSTEM_PROMPT;
-        const messages = [
-          { role: 'system' as const, content: systemPrompt },
-          ...(lastAgentResponse
-            ? [
-                {
-                  role: 'assistant' as const,
-                  content: JSON.stringify(lastAgentResponse),
-                },
-              ]
-            : []),
-          { role: 'user' as const, content: input },
-        ];
-        console.log(
-          '[HomeScreen] LLM generate start',
-          usesFinetunedInvoiceLlm ? 'finetuned' : 'stock',
-          'turns:',
-          messages.length,
-        );
-        const startedAt = Date.now();
-        const reply = await currentLlm.generate(messages);
-        console.log(
-          '[HomeScreen] Agent raw output',
-          `(${Date.now() - startedAt}ms, ${reply.length} chars):`,
-          reply,
-        );
-        const formattedResponse = fixAndValidateStructuredOutput(
-          reply,
-          AgentResponseSchema,
-        );
-        console.log('[HomeScreen] Parsed agent response:', JSON.stringify(formattedResponse));
-
-        if (!formattedResponse) {
-          setCommandStatus({
-            message: 'Could not parse LLM response',
-            isError: true,
-          });
-          scheduleCommandStatusClear();
-          return;
-        }
-
-        if (formattedResponse.incompleteInput) {
-          setCommandStatus({
-            message: 'Waiting for a complete command',
-            isError: false,
-          });
-          scheduleCommandStatusClear();
-          return;
-        }
-
-        if (formattedResponse.unknownInput) {
-          setCommandStatus({ message: 'Unknown command', isError: true });
-          scheduleCommandStatusClear();
-          return;
-        }
-
-        const label = describeAgentResponse(formattedResponse);
-        const next = applyAgentResponse(invoiceRef.current, formattedResponse);
-        if (!next) {
-          setCommandStatus({
-            message: `Could not apply ${label}`,
-            isError: true,
-          });
-          scheduleCommandStatusClear();
-          return;
-        }
-
-        invoiceRef.current = next;
-        lastSuccessfulAgentResponseRef.current = formattedResponse;
-        setInvoice(next);
-        setCommandStatus({
-          message: `Applied: ${label}`,
-          isError: false,
-        });
-        scheduleCommandStatusClear();
-      } catch (error) {
-        console.error('[HomeScreen] LLM generate failed:', error);
-        console.error(
-          '[HomeScreen] Partial LLM output:',
-          currentLlm.response || '(empty)',
-        );
-        setCommandStatus({
-          message: 'LLM inference failed',
-          isError: true,
-        });
-        scheduleCommandStatusClear();
-      }
-    },
-    [scheduleCommandStatusClear],
+  const lookup = useCallback(
+    () => ({
+      customerExists: async (name: string) =>
+        user ? customerExists(db, user.id, name) : false,
+      stockItemExists: async (name: string) =>
+        user ? stockItemExists(db, user.id, name) : false,
+    }),
+    [db, user],
   );
 
-  const processQueue = useCallback(async () => {
-    if (isProcessingQueueRef.current) {
-      return;
-    }
+  const commitInvoice = useCallback((next: Invoice) => {
+    invoiceRef.current = next;
+    setInvoice(next);
+  }, []);
 
-    isProcessingQueueRef.current = true;
-    try {
-      while (utteranceQueueRef.current.length > 0) {
-        const next = utteranceQueueRef.current.shift();
-        if (!next) {
-          continue;
-        }
-        await processUtterance(next);
-      }
-    } finally {
-      isProcessingQueueRef.current = false;
-      if (utteranceQueueRef.current.length > 0) {
-        void processQueue();
-      }
-    }
-  }, [processUtterance]);
+  const showNextPrompt = useCallback((prompt: EntityPrompt | null) => {
+    activePromptRef.current = prompt;
+    setActivePrompt(prompt);
+  }, []);
 
-  const enqueueUtterance = useCallback(
-    (committedSegment: string) => {
-      const input = committedSegment.trim();
-      if (!input) {
+  const dequeueOrSetPrompt = useCallback(
+    (prompt: EntityPrompt | null) => {
+      if (prompt) {
+        showNextPrompt(prompt);
         return;
       }
-      if (!llmRef.current.isReady) {
-        return;
-      }
-
-      utteranceQueueRef.current.push(input);
-
-      if (isProcessingQueueRef.current) {
-        const pending = utteranceQueueRef.current.length;
-        setCommandStatus({
-          message: `Queued (${pending} waiting)…`,
-          isError: false,
-        });
-      }
-
-      void processQueue();
+      const queued = promptQueueRef.current.shift() ?? null;
+      showNextPrompt(queued);
     },
-    [processQueue],
+    [showNextPrompt],
   );
 
-  const enqueueUtteranceRef = useRef(enqueueUtterance);
+  const enqueuePrompt = useCallback(
+    (prompt: EntityPrompt) => {
+      if (activePromptRef.current) {
+        promptQueueRef.current.push(prompt);
+        return;
+      }
+      showNextPrompt(prompt);
+    },
+    [showNextPrompt],
+  );
+
+  const applyActionList = useCallback(
+    async (actions: Action[]) => {
+      if (actions.length === 0) {
+        dequeueOrSetPrompt(null);
+        return;
+      }
+      const outcome = await processGatedInvoiceActions(
+        invoiceRef.current,
+        actions,
+        lookup(),
+      );
+      if (outcome.changed) {
+        commitInvoice(outcome.invoice);
+      }
+      dequeueOrSetPrompt(outcome.prompt);
+    },
+    [commitInvoice, dequeueOrSetPrompt, lookup],
+  );
+
+  const resumeFromPrompt = useCallback(
+    (applyPending: boolean) => {
+      const prompt = activePromptRef.current;
+      if (!prompt) {
+        dequeueOrSetPrompt(null);
+        return;
+      }
+      const remaining = applyPending
+        ? [prompt.action, ...prompt.remaining]
+        : prompt.remaining;
+      void applyActionList(remaining);
+    },
+    [applyActionList, dequeueOrSetPrompt],
+  );
+
   useEffect(() => {
-    enqueueUtteranceRef.current = enqueueUtterance;
-  }, [enqueueUtterance]);
+    resumeFromPromptRef.current = resumeFromPrompt;
+  }, [resumeFromPrompt]);
 
-  const endSession = useCallback(() => {
-    if (!sessionActiveRef.current) {
-      return;
-    }
-    sessionActiveRef.current = false;
-    setIsSessionActive(false);
-    clearSafetyTimer();
-    ExpoSpeechRecognitionModule.stop();
-  }, [clearSafetyTimer]);
+  const applyResponse = useCallback(
+    async (formattedResponse: AgentActionResponse) => {
+      if (isSaveInvoiceAction(formattedResponse)) {
+        void persistInvoiceRef.current();
+        return { label: 'SAVE_INVOICE', updateContext: false };
+      }
+
+      const outcome = await processGatedInvoiceActions(
+        invoiceRef.current,
+        formattedResponse,
+        lookup(),
+      );
+      if (outcome.changed) {
+        commitInvoice(outcome.invoice);
+      }
+      if (outcome.prompt) {
+        enqueuePrompt(outcome.prompt);
+      }
+      if (!outcome.changed && !outcome.prompt) {
+        return null;
+      }
+      const labeled = outcome.applied.length
+        ? outcome.applied
+        : outcome.prompt
+          ? [outcome.prompt.action]
+          : formattedResponse;
+      return {
+        label: describeInvoiceAction(labeled),
+        updateContext: !outcome.prompt,
+      };
+    },
+    [commitInvoice, enqueuePrompt, lookup],
+  );
+
+  const {
+    isSessionActive,
+    heardText,
+    commandStatus,
+    errorMessage,
+    modelsReady,
+    downloadProgress,
+    modelError,
+    handleMicPress,
+    endSession,
+    clearAgentContext,
+    showStatus,
+  } = useVoiceAgent({
+    schema: AgentActionResponseSchema,
+    getSystemPrompt: () => INVOICE_SYSTEM_PROMPT_SHORT,
+    applyResponse,
+    isIncomplete: isIncompleteInvoiceAction,
+    isUnknown: isUnknownInvoiceAction,
+  });
 
   useEffect(() => {
     if (!unlocked) {
@@ -310,135 +224,78 @@ export default function HomeScreen() {
     }
   }, [unlocked, endSession]);
 
-  const scheduleSafetyCap = useCallback(() => {
-    clearSafetyTimer();
-    safetyTimerRef.current = setTimeout(endSession, MAX_SESSION_DURATION_MS);
-  }, [clearSafetyTimer, endSession]);
-
-  useSpeechRecognitionEvent('result', (event) => {
-    if (!sessionActiveRef.current) return;
-
-    const transcript = event.results[0]?.transcript ?? '';
-
-    if (event.isFinal) {
-      committedTextRef.current += transcript + ' ';
-      setHeardText(committedTextRef.current.trim());
-      enqueueUtteranceRef.current(transcript);
-    } else {
-      setHeardText((committedTextRef.current + transcript).trim());
-    }
-  });
-
-  useSpeechRecognitionEvent('error', (event) => {
-    console.error('[HomeScreen] Speech recognition error:', event.error, event.message);
-    if (sessionActiveRef.current) {
-      endSession();
-      setErrorMessage(`Speech recognition failed: ${event.message}`);
-    }
-  });
-
-  useSpeechRecognitionEvent('end', () => {
-    if (sessionActiveRef.current) {
-      endSession();
-    }
-  });
-
-  useEffect(() => {
-    return () => {
-      clearSafetyTimer();
-      clearUtteranceQueue();
-      if (commandStatusTimerRef.current) {
-        clearTimeout(commandStatusTimerRef.current);
-      }
-      if (sessionActiveRef.current) {
-        sessionActiveRef.current = false;
-        ExpoSpeechRecognitionModule.stop();
-      }
-    };
-  }, [clearSafetyTimer, clearUtteranceQueue]);
-
-  const startSession = useCallback(async () => {
-    if (!modelsReady) {
-      setErrorMessage('On-device LLM is still loading. Please wait.');
-      return;
-    }
-
-    const { granted } =
-      await ExpoSpeechRecognitionModule.requestPermissionsAsync();
-    if (!granted) {
-      setErrorMessage('Microphone and speech recognition permissions are required.');
-      return;
-    }
-
-    clearTranscript();
-    clearUtteranceQueue();
-    clearAgentContext();
-    setErrorMessage(null);
-    setCommandStatus(null);
-
-    sessionActiveRef.current = true;
-    setIsSessionActive(true);
-    scheduleSafetyCap();
-
-    ExpoSpeechRecognitionModule.start({
-      lang: 'en-IN',
-      interimResults: true,
-      continuous: true,
-      requiresOnDeviceRecognition: true,
-      addsPunctuation: false,
-    });
-  }, [
-    modelsReady,
-    clearTranscript,
-    clearUtteranceQueue,
-    clearAgentContext,
-    scheduleSafetyCap,
-  ]);
-
-  const handleMicPress = () => {
-    if (isSessionActive) {
-      endSession();
-    } else {
-      void startSession();
-    }
-  };
-
   const handleLock = () => {
     endSession();
     lock();
   };
 
-  const handleSaveInvoice = async () => {
+  const persistInvoice = useCallback(async (): Promise<boolean> => {
     if (!user) {
-      setCommandStatus({ message: 'Unlock the app to save invoices.', isError: true });
-      scheduleCommandStatusClear();
-      return;
+      showStatus('Unlock the app to save invoices.', true);
+      return false;
     }
     if (isSaving) {
-      return;
+      return false;
     }
 
     setIsSaving(true);
+    const startedAt = Date.now();
     try {
-      await saveInvoice(db, user.id, invoice);
+      await saveInvoice(db, user.id, invoiceRef.current);
+      await waitForSaveFeedback(startedAt);
       clearAgentContext();
+      promptQueueRef.current = [];
+      showNextPrompt(null);
+      setComposerKind(null);
       setInvoice({
         ...emptyInvoice,
         companyName: user.companyName,
       });
       bumpData();
-      setCommandStatus({ message: 'Invoice saved', isError: false });
-      scheduleCommandStatusClear();
+      showStatus('Invoice saved', false);
+      return true;
     } catch (error) {
       const message =
         error instanceof SaveInvoiceError
           ? error.message
           : 'Could not save the invoice. Please try again.';
-      setCommandStatus({ message, isError: true });
-      scheduleCommandStatusClear();
+      showStatus(message, true);
+      return false;
     } finally {
       setIsSaving(false);
     }
+  }, [bumpData, clearAgentContext, db, isSaving, showNextPrompt, showStatus, user]);
+
+  useEffect(() => {
+    persistInvoiceRef.current = persistInvoice;
+  }, [persistInvoice]);
+
+  const handleSaveInvoice = () => {
+    void persistInvoice();
+  };
+
+  const handlePromptNo = () => {
+    resumeFromPrompt(false);
+  };
+
+  const handlePromptYes = () => {
+    if (!activePromptRef.current) {
+      return;
+    }
+    endSession();
+    composerSavedRef.current = false;
+    setComposerKind(activePromptRef.current.kind);
+  };
+
+  const handleComposerSaved = () => {
+    composerSavedRef.current = true;
+  };
+
+  const handleComposerClose = () => {
+    const saved = composerSavedRef.current;
+    composerSavedRef.current = false;
+    setComposerKind(null);
+    resumeFromPromptRef.current(saved);
   };
 
   const handleDownloadPdf = async () => {
@@ -469,6 +326,26 @@ export default function HomeScreen() {
       ? 'Listening…'
       : 'Tap to speak a command';
 
+  if (composerKind === 'customer' && activePrompt) {
+    return (
+      <AddCustomerComposer
+        initialName={activePrompt.name}
+        onSaved={handleComposerSaved}
+        onClose={handleComposerClose}
+      />
+    );
+  }
+
+  if (composerKind === 'stock' && activePrompt) {
+    return (
+      <AddStockComposer
+        initialName={activePrompt.name}
+        onSaved={handleComposerSaved}
+        onClose={handleComposerClose}
+      />
+    );
+  }
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
       <View style={styles.header}>
@@ -489,20 +366,7 @@ export default function HomeScreen() {
             <Text style={styles.signOutText}>Lock</Text>
           </Pressable>
           <View style={styles.actionButtonsRow}>
-            <Pressable
-              onPress={handleSaveInvoice}
-              disabled={isSaving}
-              style={({ pressed }) => [
-                styles.saveButton,
-                pressed && styles.saveButtonPressed,
-              ]}
-            >
-              {isSaving ? (
-                <ActivityIndicator size="small" color="#4C6FFF" />
-              ) : (
-                <Text style={styles.saveButtonText}>Save</Text>
-              )}
-            </Pressable>
+            <SaveButton onPress={handleSaveInvoice} isSaving={isSaving} />
             <Pressable
               onPress={handleDownloadPdf}
               disabled={isGeneratingPdf}
@@ -542,6 +406,32 @@ export default function HomeScreen() {
       {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
       {modelError ? <Text style={styles.errorText}>{modelError}</Text> : null}
       {pdfError ? <Text style={styles.errorText}>{pdfError}</Text> : null}
+
+      {activePrompt ? (
+        <View style={styles.promptBanner}>
+          <Text style={styles.promptText}>
+            {activePrompt.kind === 'customer'
+              ? `Customer ${activePrompt.name} is not in the ledger. Create them?`
+              : `Item ${activePrompt.name} is not in inventory. Create it?`}
+          </Text>
+          <View style={styles.promptActions}>
+            <Pressable
+              onPress={handlePromptYes}
+              accessibilityLabel="Create missing record"
+              style={({ pressed }) => [styles.promptYes, pressed && styles.promptButtonPressed]}
+            >
+              <Text style={styles.promptYesText}>Yes</Text>
+            </Pressable>
+            <Pressable
+              onPress={handlePromptNo}
+              accessibilityLabel="Skip creating missing record"
+              style={({ pressed }) => [styles.promptNo, pressed && styles.promptButtonPressed]}
+            >
+              <Text style={styles.promptNoText}>No</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <InvoiceCard invoice={invoice} />

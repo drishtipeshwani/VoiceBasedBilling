@@ -36,24 +36,6 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
   },
-  saveButton: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#4C6FFF',
-    minWidth: 64,
-    alignItems: 'center',
-  },
-  saveButtonPressed: {
-    opacity: 0.7,
-  },
-  saveButtonText: {
-    color: '#4C6FFF',
-    fontSize: 13,
-    fontWeight: '600',
-  },
   downloadButton: {
     paddingHorizontal: 14,
     paddingVertical: 8,
@@ -105,6 +87,52 @@ export const styles = StyleSheet.create({
     marginHorizontal: 24,
     marginTop: 10,
     fontSize: 13,
+  },
+  promptBanner: {
+    marginHorizontal: 20,
+    marginTop: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#E8E8F0',
+  },
+  promptText: {
+    fontSize: 14,
+    color: '#1C1C28',
+    fontWeight: '600',
+  },
+  promptActions: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 12,
+  },
+  promptYes: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: '#4C6FFF',
+  },
+  promptNo: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D0D0DC',
+  },
+  promptButtonPressed: {
+    opacity: 0.7,
+  },
+  promptYesText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  promptNoText: {
+    color: '#1C1C28',
+    fontSize: 13,
+    fontWeight: '600',
   },
   scrollContent: {
     padding: 20,

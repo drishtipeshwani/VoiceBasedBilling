@@ -1,4 +1,6 @@
 import {
+  getInvoiceDiscount,
+  getInvoiceSubtotal,
   getInvoiceTotal,
   getItemTotal,
   Invoice,
@@ -25,7 +27,29 @@ function formatItemDiscount(item: InvoiceItem): string {
 }
 
 export function buildInvoiceHtml(invoice: Invoice): string {
+  const subtotal = getInvoiceSubtotal(invoice);
+  const invoiceDiscount = getInvoiceDiscount(invoice);
   const totalAmount = getInvoiceTotal(invoice);
+  const dateLabel = invoice.invoiceDate ? `Date ${escapeHtml(invoice.invoiceDate)}` : '';
+  const discountLabel =
+    invoice.invoiceDiscountPercent != null && invoice.invoiceDiscountPercent > 0
+      ? `${invoice.invoiceDiscountPercent}%`
+      : invoice.invoiceDiscountAmount != null && invoice.invoiceDiscountAmount > 0
+        ? formatAmount(invoice.invoiceDiscountAmount)
+        : null;
+  const discountRow =
+    invoiceDiscount > 0 && discountLabel
+      ? `
+          <div class="subtotal-row">
+            <span class="subtotal-label">Subtotal</span>
+            <span class="subtotal-value">${formatAmount(subtotal)}</span>
+          </div>
+          <div class="subtotal-row">
+            <span class="subtotal-label">Invoice discount (${discountLabel})</span>
+            <span class="subtotal-value">-${formatAmount(invoiceDiscount)}</span>
+          </div>
+        `
+      : '';
 
   const rows = invoice.items
     .map((item) => {
@@ -80,6 +104,11 @@ export function buildInvoiceHtml(invoice: Invoice): string {
             letter-spacing: 2px;
             margin-top: 6px;
           }
+          .invoice-date {
+            font-size: 13px;
+            color: #6E6E80;
+            margin-top: 8px;
+          }
           .billed-to-label {
             font-size: 11px;
             color: #A0A0B2;
@@ -122,6 +151,16 @@ export function buildInvoiceHtml(invoice: Invoice): string {
             padding-top: 16px;
             border-top: 1px solid #EEEEF2;
           }
+          .subtotal-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+          }
+          .subtotal-label, .subtotal-value {
+            font-size: 13px;
+            color: #6E6E80;
+          }
           .total-row {
             display: flex;
             justify-content: space-between;
@@ -155,6 +194,7 @@ export function buildInvoiceHtml(invoice: Invoice): string {
         <div class="letterhead">
           <p class="company-name">${escapeHtml(invoice.companyName)}</p>
           <p class="invoice-label">INVOICE</p>
+          ${dateLabel ? `<p class="invoice-date">${dateLabel}</p>` : ''}
         </div>
 
         <p class="billed-to-label">Billed To</p>
@@ -176,6 +216,7 @@ export function buildInvoiceHtml(invoice: Invoice): string {
         </table>
 
         <div class="totals">
+          ${discountRow}
           <div class="total-row">
             <span class="total-label">Total Amount</span>
             <span class="total-value">${formatAmount(totalAmount)}</span>

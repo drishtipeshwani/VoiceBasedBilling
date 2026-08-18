@@ -1,5 +1,12 @@
 import { Text, View } from 'react-native';
-import { getInvoiceTotal, getItemTotal, Invoice, InvoiceItem } from '../types/invoice';
+import {
+  getInvoiceDiscount,
+  getInvoiceSubtotal,
+  getInvoiceTotal,
+  getItemTotal,
+  Invoice,
+  InvoiceItem,
+} from '../types/invoice';
 import { formatAmount, formatAmountInWords } from '../utils/currency';
 import { styles } from './InvoiceCard.styles';
 
@@ -18,9 +25,23 @@ function formatItemDiscount(item: InvoiceItem): string {
   return parts.length > 0 ? parts.join(' + ') : '-';
 }
 
+function formatInvoiceDiscount(invoice: Invoice): string | null {
+  if (invoice.invoiceDiscountPercent != null && invoice.invoiceDiscountPercent > 0) {
+    return `${invoice.invoiceDiscountPercent}%`;
+  }
+  if (invoice.invoiceDiscountAmount != null && invoice.invoiceDiscountAmount > 0) {
+    return formatAmount(invoice.invoiceDiscountAmount);
+  }
+  return null;
+}
+
 export default function InvoiceCard({ invoice }: InvoiceCardProps) {
   const hasItems = invoice.items.length > 0;
+  const subtotal = getInvoiceSubtotal(invoice);
+  const invoiceDiscount = getInvoiceDiscount(invoice);
   const totalAmount = getInvoiceTotal(invoice);
+  const invoiceDiscountLabel = formatInvoiceDiscount(invoice);
+  const showInvoiceDiscount = invoiceDiscount > 0 && invoiceDiscountLabel !== null;
 
   return (
     <View style={styles.card}>
@@ -29,6 +50,9 @@ export default function InvoiceCard({ invoice }: InvoiceCardProps) {
           {invoice.companyName || 'Your Company Name'}
         </Text>
         <Text style={styles.invoiceLabel}>INVOICE</Text>
+        <Text style={invoice.invoiceDate ? styles.invoiceDate : styles.invoiceDatePlaceholder}>
+          {invoice.invoiceDate ? `Date ${invoice.invoiceDate}` : 'Date not set'}
+        </Text>
       </View>
 
       <View style={styles.billedToRow}>
@@ -86,6 +110,20 @@ export default function InvoiceCard({ invoice }: InvoiceCardProps) {
 
       {hasItems ? (
         <View style={styles.totalsSection}>
+          {showInvoiceDiscount ? (
+            <>
+              <View style={styles.subtotalRow}>
+                <Text style={styles.subtotalLabel}>Subtotal</Text>
+                <Text style={styles.subtotalValue}>{formatAmount(subtotal)}</Text>
+              </View>
+              <View style={styles.subtotalRow}>
+                <Text style={styles.subtotalLabel}>
+                  Invoice discount ({invoiceDiscountLabel})
+                </Text>
+                <Text style={styles.subtotalValue}>-{formatAmount(invoiceDiscount)}</Text>
+              </View>
+            </>
+          ) : null}
           <View style={styles.totalAmountRow}>
             <Text style={styles.totalAmountLabel}>Total Amount</Text>
             <Text style={styles.totalAmountValue}>{formatAmount(totalAmount)}</Text>

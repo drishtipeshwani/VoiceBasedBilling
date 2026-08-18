@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { FlatList, Text, View } from 'react-native';
+import { FlatList, Pressable, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSQLiteContext } from 'expo-sqlite';
+import AddStockComposer from '../components/AddStockComposer';
 import { listStockItems } from '../db/queries';
 import type { StockItem } from '../types/stock';
 import { useAuth } from '../utils/authContext';
@@ -14,7 +15,9 @@ function StockItemCard({ item }: { item: StockItem }) {
     <View style={styles.card}>
       <View style={styles.topRow}>
         <Text style={styles.itemName}>{item.name}</Text>
-        <Text style={styles.quantity}>{item.quantity} in stock</Text>
+        <Text style={[styles.quantity, item.quantity < 0 && styles.quantityNegative]}>
+          {item.quantity} in stock
+        </Text>
       </View>
       <View style={styles.divider} />
       <View style={styles.bottomRow}>
@@ -36,6 +39,7 @@ export default function InventoryScreen() {
   const { user } = useAuth();
   const { dataVersion } = useShopData();
   const [items, setItems] = useState<StockItem[]>([]);
+  const [isAdding, setIsAdding] = useState(false);
 
   useEffect(() => {
     if (!user) {
@@ -45,11 +49,17 @@ export default function InventoryScreen() {
     void listStockItems(db, user.id).then(setItems);
   }, [db, user, dataVersion]);
 
+  if (isAdding) {
+    return <AddStockComposer onClose={() => setIsAdding(false)} />;
+  }
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
       <View style={styles.header}>
-        <Text style={styles.title}>Inventory</Text>
-        <Text style={styles.subtitle}>Stock items on hand</Text>
+        <View style={styles.headerText}>
+          <Text style={styles.title}>Inventory</Text>
+          <Text style={styles.subtitle}>Stock items on hand</Text>
+        </View>
       </View>
 
       <FlatList
@@ -61,6 +71,17 @@ export default function InventoryScreen() {
           <Text style={styles.emptyText}>No stock items yet.</Text>
         }
       />
+
+      <View style={styles.footer}>
+        <Text style={styles.statusText}>Tap to add a stock item</Text>
+        <Pressable
+          onPress={() => setIsAdding(true)}
+          accessibilityLabel="Add stock item"
+          style={({ pressed }) => [styles.addButton, pressed && styles.addButtonPressed]}
+        >
+          <Text style={styles.addButtonText}>+</Text>
+        </Pressable>
+      </View>
     </SafeAreaView>
   );
 }

@@ -6,9 +6,46 @@ export const styles = StyleSheet.create({
     backgroundColor: '#F5F6FA',
   },
   header: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
     paddingHorizontal: 24,
     paddingTop: 16,
     paddingBottom: 8,
+  },
+  headerText: {
+    flex: 1,
+  },
+  footer: {
+    alignItems: 'center',
+    paddingVertical: 20,
+  },
+  statusText: {
+    fontSize: 14,
+    color: '#6E6E80',
+    marginBottom: 14,
+  },
+  addButton: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    backgroundColor: '#4C6FFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#4C6FFF',
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 4,
+  },
+  addButtonPressed: {
+    opacity: 0.8,
+  },
+  addButtonText: {
+    color: '#FFFFFF',
+    fontSize: 40,
+    fontWeight: '500',
+    marginTop: -2,
   },
   title: {
     fontSize: 26,
@@ -50,6 +87,9 @@ export const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#4C6FFF',
   },
+  quantityNegative: {
+    color: '#D64545',
+  },
   divider: {
     height: 1,
     backgroundColor: '#EEEEF2',
@@ -79,5 +119,17 @@ export const styles = StyleSheet.create({
     color: '#A0A0B2',
     fontSize: 14,
     marginTop: 40,
+  },
+  placeholderName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#C4C4D2',
+    fontStyle: 'italic',
+  },
+  placeholderValue: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#C4C4D2',
+    marginTop: 2,
   },
 });

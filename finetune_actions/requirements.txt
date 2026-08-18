@@ -1,0 +1,11 @@
+# LoRA SFT training stack for finetune_actions/. Reuse finetune/.venv if it
+# already has these pins; otherwise:
+#   python3 -m venv finetune_actions/.venv
+#   finetune_actions/.venv/bin/pip install -r finetune_actions/requirements.txt
+
+torch==2.13.0
+transformers==5.14.1
+peft==0.19.1
+accelerate==1.14.0
+datasets==5.0.0
+matplotlib>=3.8.0

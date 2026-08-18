@@ -36,18 +36,22 @@ yarn-error.*
 
 # python
 finetune/.venv/
+finetune_actions/.venv/
 __pycache__/
 *.pyc
 
 # typescript
 *.tsbuildinfo
 
-# derived training files, rebuilt by finetune/to_chat.py
+# derived training files, rebuilt by generate_dataset.py / to_chat.py
 finetune/data/*.chat.jsonl
+finetune_actions/data/*.chat.jsonl
 
 # merged HF weights and ExecuTorch binaries (too large to commit)
 finetune/output/merged/
 finetune/output/*.pth
+finetune_actions/output/merged/
+finetune_actions/output/*.pth
 *.pte
 
 # generated native folders

@@ -5,3 +5,17 @@ export interface StockItem {
   costPrice: number;
   sellingPrice: number;
 }
+
+export interface StockDraft {
+  name: string;
+  quantity: number | null;
+  costPrice: number | null;
+  sellingPrice: number | null;
+}
+
+export const emptyStockDraft: StockDraft = {
+  name: '',
+  quantity: null,
+  costPrice: null,
+  sellingPrice: null,
+};

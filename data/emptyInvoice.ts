@@ -4,4 +4,7 @@ export const emptyInvoice: Invoice = {
   companyName: '',
   customerName: '',
   items: [],
+  invoiceDate: null,
+  invoiceDiscountPercent: null,
+  invoiceDiscountAmount: null,
 };

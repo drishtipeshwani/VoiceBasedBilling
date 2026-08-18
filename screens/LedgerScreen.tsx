@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { FlatList, Text, View } from 'react-native';
+import { FlatList, Pressable, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSQLiteContext } from 'expo-sqlite';
+import AddCustomerComposer from '../components/AddCustomerComposer';
 import { listCustomers } from '../db/queries';
 import type { CustomerLedgerEntry } from '../types/ledger';
 import { useAuth } from '../utils/authContext';
@@ -29,6 +30,7 @@ export default function LedgerScreen() {
   const { user } = useAuth();
   const { dataVersion } = useShopData();
   const [customers, setCustomers] = useState<CustomerLedgerEntry[]>([]);
+  const [isAdding, setIsAdding] = useState(false);
 
   useEffect(() => {
     if (!user) {
@@ -38,11 +40,17 @@ export default function LedgerScreen() {
     void listCustomers(db, user.id).then(setCustomers);
   }, [db, user, dataVersion]);
 
+  if (isAdding) {
+    return <AddCustomerComposer onClose={() => setIsAdding(false)} />;
+  }
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
       <View style={styles.header}>
-        <Text style={styles.title}>Ledger</Text>
-        <Text style={styles.subtitle}>Customers and their balances</Text>
+        <View style={styles.headerText}>
+          <Text style={styles.title}>Ledger</Text>
+          <Text style={styles.subtitle}>Customers and their balances</Text>
+        </View>
       </View>
 
       <FlatList
@@ -54,6 +62,17 @@ export default function LedgerScreen() {
           <Text style={styles.emptyText}>No customers yet.</Text>
         }
       />
+
+      <View style={styles.footer}>
+        <Text style={styles.statusText}>Tap to add a customer</Text>
+        <Pressable
+          onPress={() => setIsAdding(true)}
+          accessibilityLabel="Add customer"
+          style={({ pressed }) => [styles.addButton, pressed && styles.addButtonPressed]}
+        >
+          <Text style={styles.addButtonText}>+</Text>
+        </Pressable>
+      </View>
     </SafeAreaView>
   );
 }

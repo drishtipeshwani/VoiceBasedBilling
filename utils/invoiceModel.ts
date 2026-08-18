@@ -7,8 +7,6 @@ const envPte = process.env.EXPO_PUBLIC_INVOICE_PTE;
 const FINETUNED_PTE =
   envPte?.startsWith('https://') ? envPte : DEFAULT_FINETUNED_PTE;
 
-export const usesFinetunedInvoiceLlm = true;
-
 export const INVOICE_LLM_MODEL = {
   ...LFM2_5_350M,
   modelName: 'lfm2.5-350m' as const,

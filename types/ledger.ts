@@ -3,3 +3,13 @@ export interface CustomerLedgerEntry {
   name: string;
   balanceAmount: number;
 }
+
+export interface CustomerDraft {
+  name: string;
+  balanceAmount: number | null;
+}
+
+export const emptyCustomerDraft: CustomerDraft = {
+  name: '',
+  balanceAmount: null,
+};

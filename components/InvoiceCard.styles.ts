@@ -38,6 +38,17 @@ export const styles = StyleSheet.create({
     letterSpacing: 2,
     marginTop: 6,
   },
+  invoiceDate: {
+    fontSize: 13,
+    color: '#6E6E80',
+    marginTop: 8,
+  },
+  invoiceDatePlaceholder: {
+    fontSize: 13,
+    color: '#C4C4D2',
+    fontStyle: 'italic',
+    marginTop: 8,
+  },
   billedToRow: {
     marginBottom: 18,
   },
@@ -130,6 +141,20 @@ export const styles = StyleSheet.create({
     paddingTop: 16,
     borderTopWidth: 1,
     borderTopColor: '#EEEEF2',
+  },
+  subtotalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  subtotalLabel: {
+    fontSize: 13,
+    color: '#6E6E80',
+  },
+  subtotalValue: {
+    fontSize: 13,
+    color: '#6E6E80',
   },
   totalAmountRow: {
     flexDirection: 'row',
