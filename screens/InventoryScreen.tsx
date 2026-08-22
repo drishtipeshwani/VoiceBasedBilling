@@ -10,9 +10,20 @@ import { formatAmount } from '../utils/currency';
 import { useShopData } from '../utils/shopDataContext';
 import { styles } from './InventoryScreen.styles';
 
-function StockItemCard({ item }: { item: StockItem }) {
+function StockItemCard({
+  item,
+  onPress,
+}: {
+  item: StockItem;
+  onPress: () => void;
+}) {
   return (
-    <View style={styles.card}>
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`Edit stock item ${item.name}`}
+      style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
+    >
       <View style={styles.topRow}>
         <Text style={styles.itemName}>{item.name}</Text>
         <Text style={[styles.quantity, item.quantity < 0 && styles.quantityNegative]}>
@@ -30,7 +41,7 @@ function StockItemCard({ item }: { item: StockItem }) {
           <Text style={styles.priceValue}>{formatAmount(item.sellingPrice)}</Text>
         </View>
       </View>
-    </View>
+    </Pressable>
   );
 }
 
@@ -39,7 +50,7 @@ export default function InventoryScreen() {
   const { user } = useAuth();
   const { dataVersion } = useShopData();
   const [items, setItems] = useState<StockItem[]>([]);
-  const [isAdding, setIsAdding] = useState(false);
+  const [composerTarget, setComposerTarget] = useState<'new' | StockItem | null>(null);
 
   useEffect(() => {
     if (!user) {
@@ -49,8 +60,13 @@ export default function InventoryScreen() {
     void listStockItems(db, user.id).then(setItems);
   }, [db, user, dataVersion]);
 
-  if (isAdding) {
-    return <AddStockComposer onClose={() => setIsAdding(false)} />;
+  if (composerTarget) {
+    return (
+      <AddStockComposer
+        existingItem={composerTarget === 'new' ? undefined : composerTarget}
+        onClose={() => setComposerTarget(null)}
+      />
+    );
   }
 
   return (
@@ -66,7 +82,9 @@ export default function InventoryScreen() {
         data={items}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.listContent}
-        renderItem={({ item }) => <StockItemCard item={item} />}
+        renderItem={({ item }) => (
+          <StockItemCard item={item} onPress={() => setComposerTarget(item)} />
+        )}
         ListEmptyComponent={
           <Text style={styles.emptyText}>No stock items yet.</Text>
         }
@@ -75,7 +93,7 @@ export default function InventoryScreen() {
       <View style={styles.footer}>
         <Text style={styles.statusText}>Tap to add a stock item</Text>
         <Pressable
-          onPress={() => setIsAdding(true)}
+          onPress={() => setComposerTarget('new')}
           accessibilityLabel="Add stock item"
           style={({ pressed }) => [styles.addButton, pressed && styles.addButtonPressed]}
         >

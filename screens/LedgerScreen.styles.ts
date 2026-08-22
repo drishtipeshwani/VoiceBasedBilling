@@ -16,6 +16,24 @@ export const styles = StyleSheet.create({
   headerText: {
     flex: 1,
   },
+  headerActions: {
+    marginLeft: 12,
+    marginTop: 4,
+    alignItems: 'flex-end',
+    gap: 8,
+  },
+  headerButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  headerButtonPressed: {
+    opacity: 0.6,
+  },
+  headerButtonText: {
+    color: '#6E6E80',
+    fontSize: 12,
+    fontWeight: '500',
+  },
   footer: {
     alignItems: 'center',
     paddingVertical: 20,
@@ -76,11 +94,34 @@ export const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     elevation: 2,
   },
+  rowPressed: {
+    opacity: 0.7,
+  },
   customerName: {
     fontSize: 16,
     fontWeight: '600',
     color: '#1C1C28',
     flex: 1,
+  },
+  rowLeft: {
+    flex: 1,
+  },
+  invoiceNumber: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#4C6FFF',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  date: {
+    fontSize: 12,
+    color: '#A0A0B2',
+    marginTop: 2,
+  },
+  amount: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1C1C28',
   },
   balanceWrap: {
     alignItems: 'flex-end',

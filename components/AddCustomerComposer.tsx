@@ -7,8 +7,9 @@ import {
   DuplicateNameError,
   SaveRecordError,
   insertCustomer,
+  updateCustomer,
 } from '../db/queries';
-import type { CustomerDraft } from '../types/ledger';
+import type { CustomerDraft, CustomerLedgerEntry } from '../types/ledger';
 import { emptyCustomerDraft } from '../types/ledger';
 import {
   CustomerAgentActionResponseSchema,
@@ -57,20 +58,30 @@ interface AddCustomerComposerProps {
   onClose: () => void;
   onSaved?: () => void;
   initialName?: string;
+  existingCustomer?: CustomerLedgerEntry;
 }
 
 export default function AddCustomerComposer({
   onClose,
   onSaved,
   initialName,
+  existingCustomer,
 }: AddCustomerComposerProps) {
   const db = useSQLiteContext();
   const { user } = useAuth();
   const { bumpData } = useShopData();
-  const [draft, setDraft] = useState<CustomerDraft>(() => ({
-    ...emptyCustomerDraft,
-    name: initialName ?? '',
-  }));
+  const [draft, setDraft] = useState<CustomerDraft>(() => {
+    if (existingCustomer) {
+      return {
+        name: existingCustomer.name,
+        balanceAmount: existingCustomer.balanceAmount,
+      };
+    }
+    return {
+      ...emptyCustomerDraft,
+      name: initialName ?? '',
+    };
+  });
   const [isSaving, setIsSaving] = useState(false);
   const draftRef = useRef(draft);
   const persistCustomerRef = useRef<() => Promise<boolean>>(async () => false);
@@ -132,10 +143,15 @@ export default function AddCustomerComposer({
     setIsSaving(true);
     const startedAt = Date.now();
     try {
-      await insertCustomer(db, user.id, {
+      const payload = {
         name: draftRef.current.name,
         balanceAmount: draftRef.current.balanceAmount ?? 0,
-      });
+      };
+      if (existingCustomer) {
+        await updateCustomer(db, user.id, existingCustomer.id, payload);
+      } else {
+        await insertCustomer(db, user.id, payload);
+      }
       bumpData();
       clearAgentContext();
       await waitForSaveFeedback(startedAt);
@@ -153,7 +169,18 @@ export default function AddCustomerComposer({
     } finally {
       setIsSaving(false);
     }
-  }, [bumpData, clearAgentContext, db, endSession, isSaving, onClose, onSaved, showStatus, user]);
+  }, [
+    bumpData,
+    clearAgentContext,
+    db,
+    endSession,
+    existingCustomer,
+    isSaving,
+    onClose,
+    onSaved,
+    showStatus,
+    user,
+  ]);
 
   useEffect(() => {
     persistCustomerRef.current = persistCustomer;
@@ -165,8 +192,12 @@ export default function AddCustomerComposer({
 
   return (
     <VoiceComposer
-      title="New customer"
-      subtitle="Speak a command — name and optional opening balance"
+      title={existingCustomer ? 'Edit customer' : 'New customer'}
+      subtitle={
+        existingCustomer
+          ? 'Speak a command — update name or outstanding balance'
+          : 'Speak a command — name and optional opening balance'
+      }
       onCancel={handleCancel}
       onSave={handleSave}
       isSaving={isSaving}

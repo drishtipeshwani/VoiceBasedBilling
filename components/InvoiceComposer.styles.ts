@@ -174,4 +174,9 @@ export const styles = StyleSheet.create({
     fontSize: 32,
     color: '#FFFFFF',
   },
+  centered: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 });

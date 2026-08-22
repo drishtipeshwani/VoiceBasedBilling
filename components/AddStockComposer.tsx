@@ -7,8 +7,9 @@ import {
   DuplicateNameError,
   SaveRecordError,
   insertStockItem,
+  updateStockItem,
 } from '../db/queries';
-import type { StockDraft } from '../types/stock';
+import type { StockDraft, StockItem } from '../types/stock';
 import { emptyStockDraft } from '../types/stock';
 import {
   StockAgentActionResponseSchema,
@@ -63,20 +64,32 @@ interface AddStockComposerProps {
   onClose: () => void;
   onSaved?: () => void;
   initialName?: string;
+  existingItem?: StockItem;
 }
 
 export default function AddStockComposer({
   onClose,
   onSaved,
   initialName,
+  existingItem,
 }: AddStockComposerProps) {
   const db = useSQLiteContext();
   const { user } = useAuth();
   const { bumpData } = useShopData();
-  const [draft, setDraft] = useState<StockDraft>(() => ({
-    ...emptyStockDraft,
-    name: initialName ?? '',
-  }));
+  const [draft, setDraft] = useState<StockDraft>(() => {
+    if (existingItem) {
+      return {
+        name: existingItem.name,
+        quantity: existingItem.quantity,
+        costPrice: existingItem.costPrice,
+        sellingPrice: existingItem.sellingPrice,
+      };
+    }
+    return {
+      ...emptyStockDraft,
+      name: initialName ?? '',
+    };
+  });
   const [isSaving, setIsSaving] = useState(false);
   const draftRef = useRef(draft);
   const persistStockRef = useRef<() => Promise<boolean>>(async () => false);
@@ -138,12 +151,17 @@ export default function AddStockComposer({
     setIsSaving(true);
     const startedAt = Date.now();
     try {
-      await insertStockItem(db, user.id, {
+      const payload = {
         name: draftRef.current.name,
         quantity: draftRef.current.quantity ?? 0,
         costPrice: draftRef.current.costPrice ?? 0,
         sellingPrice: draftRef.current.sellingPrice ?? 0,
-      });
+      };
+      if (existingItem) {
+        await updateStockItem(db, user.id, existingItem.id, payload);
+      } else {
+        await insertStockItem(db, user.id, payload);
+      }
       bumpData();
       clearAgentContext();
       await waitForSaveFeedback(startedAt);
@@ -161,7 +179,18 @@ export default function AddStockComposer({
     } finally {
       setIsSaving(false);
     }
-  }, [bumpData, clearAgentContext, db, endSession, isSaving, onClose, onSaved, showStatus, user]);
+  }, [
+    bumpData,
+    clearAgentContext,
+    db,
+    endSession,
+    existingItem,
+    isSaving,
+    onClose,
+    onSaved,
+    showStatus,
+    user,
+  ]);
 
   useEffect(() => {
     persistStockRef.current = persistStock;
@@ -173,7 +202,7 @@ export default function AddStockComposer({
 
   return (
     <VoiceComposer
-      title="New stock item"
+      title={existingItem ? 'Edit stock item' : 'New stock item'}
       subtitle="Speak a command — name, quantity, cost, selling price"
       onCancel={handleCancel}
       onSave={handleSave}

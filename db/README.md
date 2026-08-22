@@ -103,3 +103,14 @@ Saving is a single SQLite transaction:
 4. Each line item deducts its quantity from `stock.quantity`.
 
 Re-adding an existing stock name increases quantity instead of inserting a duplicate. Customer names cannot be duplicated.
+
+## What happens on edit
+
+Customer and stock edits update the existing row by id. Names stay unique per user; renaming to another record’s name is rejected. Stock quantity is set to the spoken value (not added to the previous quantity).
+
+Updating a saved invoice is also a single transaction:
+
+1. The new customer and every new line item must already exist, same as create.
+2. Previous line quantities are added back to stock (skipped if that stock row is gone). The previous total is subtracted from the old customer’s balance.
+3. The new total is added to the (possibly different) customer, line items are replaced, `snapshot` is rewritten, and new quantities are deducted from stock.
+4. `invoice_number` does not change.

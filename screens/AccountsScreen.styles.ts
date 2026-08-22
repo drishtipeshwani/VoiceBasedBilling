@@ -80,32 +80,4 @@ export const styles = StyleSheet.create({
     fontSize: 14,
     marginTop: 40,
   },
-  backButton: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    marginTop: 4,
-  },
-  backButtonPressed: {
-    opacity: 0.6,
-  },
-  backText: {
-    color: '#6E6E80',
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  scrollContent: {
-    padding: 20,
-    paddingBottom: 40,
-  },
-  centered: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 24,
-  },
-  errorText: {
-    color: '#D64545',
-    textAlign: 'center',
-    fontSize: 13,
-  },
 });

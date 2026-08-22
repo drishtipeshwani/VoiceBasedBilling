@@ -1,17 +1,10 @@
 import { useEffect, useState } from 'react';
-import {
-  ActivityIndicator,
-  FlatList,
-  Pressable,
-  ScrollView,
-  Text,
-  View,
-} from 'react-native';
+import { FlatList, Pressable, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSQLiteContext } from 'expo-sqlite';
-import InvoiceCard from '../components/InvoiceCard';
-import { getInvoiceById, listInvoices } from '../db/queries';
-import type { InvoiceSummary, SavedInvoice } from '../types/accounts';
+import InvoiceComposer from '../components/InvoiceComposer';
+import { listInvoices } from '../db/queries';
+import type { InvoiceSummary } from '../types/accounts';
 import { useAuth } from '../utils/authContext';
 import { formatAmount } from '../utils/currency';
 import { useShopData } from '../utils/shopDataContext';
@@ -36,7 +29,7 @@ function InvoiceRow({
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={`Open invoice ${invoice.invoiceNumber}`}
+      accessibilityLabel={`Edit invoice ${invoice.invoiceNumber}`}
       style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
     >
       <View style={styles.rowLeft}>
@@ -46,71 +39,6 @@ function InvoiceRow({
       </View>
       <Text style={styles.amount}>{formatAmount(invoice.totalAmount)}</Text>
     </Pressable>
-  );
-}
-
-function InvoiceDetailView({
-  invoiceId,
-  onClose,
-}: {
-  invoiceId: string;
-  onClose: () => void;
-}) {
-  const db = useSQLiteContext();
-  const { user } = useAuth();
-  const [saved, setSaved] = useState<SavedInvoice | null>(null);
-  const [loadError, setLoadError] = useState(false);
-
-  useEffect(() => {
-    if (!user) {
-      setSaved(null);
-      return;
-    }
-
-    let cancelled = false;
-    void getInvoiceById(db, user.id, invoiceId).then((result) => {
-      if (cancelled) return;
-      setSaved(result);
-      setLoadError(result == null);
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [db, invoiceId, user]);
-
-  return (
-    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
-      <View style={styles.header}>
-        <View style={styles.headerText}>
-          <Text style={styles.title}>
-            {saved ? `Invoice #${saved.invoiceNumber}` : 'Invoice'}
-          </Text>
-          <Text style={styles.subtitle}>Saved bill</Text>
-        </View>
-        <Pressable
-          onPress={onClose}
-          accessibilityLabel="Back to invoices"
-          style={({ pressed }) => [styles.backButton, pressed && styles.backButtonPressed]}
-        >
-          <Text style={styles.backText}>Back</Text>
-        </Pressable>
-      </View>
-
-      {saved ? (
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          <InvoiceCard invoice={saved.invoice} />
-        </ScrollView>
-      ) : (
-        <View style={styles.centered}>
-          {loadError ? (
-            <Text style={styles.errorText}>Could not open this invoice.</Text>
-          ) : (
-            <ActivityIndicator size="large" color="#4C6FFF" />
-          )}
-        </View>
-      )}
-    </SafeAreaView>
   );
 }
 
@@ -131,8 +59,8 @@ export default function AccountsScreen() {
 
   if (selectedInvoiceId) {
     return (
-      <InvoiceDetailView
-        invoiceId={selectedInvoiceId}
+      <InvoiceComposer
+        existingInvoiceId={selectedInvoiceId}
         onClose={() => setSelectedInvoiceId(null)}
       />
     );

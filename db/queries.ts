@@ -125,6 +125,7 @@ export async function listCustomers(
 export async function listInvoices(
   db: SQLiteDatabase,
   userId: string,
+  customerId?: string,
 ): Promise<InvoiceSummary[]> {
   const rows = await db.getAllAsync<{
     id: string;
@@ -133,11 +134,16 @@ export async function listInvoices(
     invoice_date: string;
     total_amount: number;
   }>(
-    `SELECT id, invoice_number, customer_name, invoice_date, total_amount
-     FROM invoices
-     WHERE user_id = ?
-     ORDER BY invoice_number DESC`,
-    userId,
+    customerId
+      ? `SELECT id, invoice_number, customer_name, invoice_date, total_amount
+         FROM invoices
+         WHERE user_id = ? AND customer_id = ?
+         ORDER BY invoice_number DESC`
+      : `SELECT id, invoice_number, customer_name, invoice_date, total_amount
+         FROM invoices
+         WHERE user_id = ?
+         ORDER BY invoice_number DESC`,
+    ...(customerId ? [userId, customerId] : [userId]),
   );
   return rows.map((row) => ({
     id: row.id,
@@ -420,6 +426,61 @@ export async function insertStockItem(
   };
 }
 
+export async function updateStockItem(
+  db: SQLiteDatabase,
+  userId: string,
+  id: string,
+  input: {
+    name: string;
+    quantity: number;
+    costPrice: number;
+    sellingPrice: number;
+  },
+): Promise<StockItem> {
+  const name = normalizeEntityName(input.name);
+  if (!name) {
+    throw new SaveRecordError('Add an item name before saving.');
+  }
+
+  const takenBy = await findStockByName(db, userId, name);
+  if (takenBy && takenBy.id !== id) {
+    throw new DuplicateNameError(`A stock item named "${name}" already exists.`);
+  }
+
+  try {
+    const result = await db.runAsync(
+      `UPDATE stock
+       SET name = ?, quantity = ?, cost_price = ?, selling_price = ?
+       WHERE id = ? AND user_id = ?`,
+      name,
+      input.quantity,
+      input.costPrice,
+      input.sellingPrice,
+      id,
+      userId,
+    );
+    if (result.changes === 0) {
+      throw new SaveRecordError('Could not update this stock item.');
+    }
+  } catch (error) {
+    if (error instanceof SaveRecordError || error instanceof DuplicateNameError) {
+      throw error;
+    }
+    if (isUniqueConstraintError(error)) {
+      throw new DuplicateNameError(`A stock item named "${name}" already exists.`);
+    }
+    throw error;
+  }
+
+  return {
+    id,
+    name,
+    quantity: input.quantity,
+    costPrice: input.costPrice,
+    sellingPrice: input.sellingPrice,
+  };
+}
+
 export async function insertCustomer(
   db: SQLiteDatabase,
   userId: string,
@@ -462,6 +523,55 @@ export async function insertCustomer(
   };
 }
 
+export async function updateCustomer(
+  db: SQLiteDatabase,
+  userId: string,
+  id: string,
+  input: {
+    name: string;
+    balanceAmount: number;
+  },
+): Promise<CustomerLedgerEntry> {
+  const name = normalizeEntityName(input.name);
+  if (!name) {
+    throw new SaveRecordError('Add a customer name before saving.');
+  }
+
+  const takenBy = await findCustomerIdByName(db, userId, name);
+  if (takenBy && takenBy !== id) {
+    throw new DuplicateNameError(`A customer named "${name}" already exists.`);
+  }
+
+  try {
+    const result = await db.runAsync(
+      `UPDATE customers
+       SET name = ?, balance_amount = ?
+       WHERE id = ? AND user_id = ?`,
+      name,
+      input.balanceAmount,
+      id,
+      userId,
+    );
+    if (result.changes === 0) {
+      throw new SaveRecordError('Could not update this customer.');
+    }
+  } catch (error) {
+    if (error instanceof SaveRecordError || error instanceof DuplicateNameError) {
+      throw error;
+    }
+    if (isUniqueConstraintError(error)) {
+      throw new DuplicateNameError(`A customer named "${name}" already exists.`);
+    }
+    throw error;
+  }
+
+  return {
+    id,
+    name,
+    balanceAmount: input.balanceAmount,
+  };
+}
+
 async function applyStockSale(
   db: SQLiteDatabase,
   userId: string,
@@ -481,11 +591,29 @@ async function applyStockSale(
   );
 }
 
-export async function saveInvoice(
+async function restoreStockSale(
   db: SQLiteDatabase,
   userId: string,
-  invoice: Invoice,
+  itemName: string,
+  soldQty: number,
 ): Promise<void> {
+  const stock = await findStockByName(db, userId, itemName);
+  if (!stock) {
+    return;
+  }
+  await db.runAsync(
+    'UPDATE stock SET quantity = ? WHERE id = ?',
+    stock.quantity + soldQty,
+    stock.id,
+  );
+}
+
+function prepareInvoicePayload(invoice: Invoice): {
+  customerName: string;
+  items: InvoiceItem[];
+  snapshotInvoice: Invoice;
+  totalAmount: number;
+} {
   const customerName = normalizeEntityName(invoice.customerName);
   if (!customerName) {
     throw new SaveInvoiceError('Add a customer before saving.');
@@ -503,24 +631,79 @@ export async function saveInvoice(
     customerName,
     items,
   };
-  const totalAmount = getInvoiceTotal(snapshotInvoice);
+  return {
+    customerName,
+    items,
+    snapshotInvoice,
+    totalAmount: getInvoiceTotal(snapshotInvoice),
+  };
+}
+
+async function assertInvoiceDependencies(
+  db: SQLiteDatabase,
+  userId: string,
+  customerName: string,
+  items: InvoiceItem[],
+): Promise<string> {
+  const customerId = await findCustomerIdByName(db, userId, customerName);
+  if (!customerId) {
+    throw new SaveInvoiceError(
+      'Add this customer in the ledger before saving.',
+    );
+  }
+
+  for (const item of items) {
+    if (!(await findStockByName(db, userId, item.name))) {
+      throw new SaveInvoiceError(
+        `Add "${item.name}" to inventory before saving.`,
+      );
+    }
+  }
+
+  return customerId;
+}
+
+async function insertInvoiceItems(
+  db: SQLiteDatabase,
+  userId: string,
+  invoiceId: string,
+  items: InvoiceItem[],
+): Promise<void> {
+  for (const item of items) {
+    await db.runAsync(
+      `INSERT INTO invoice_items (
+         id, invoice_id, name, quantity, discount_percent,
+         price_per_item, discount_amount
+       ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      newId(),
+      invoiceId,
+      item.name,
+      item.quantity,
+      item.discountPercent,
+      item.pricePerItem,
+      item.discountAmount,
+    );
+
+    await applyStockSale(db, userId, item.name, item.quantity ?? 0);
+  }
+}
+
+export async function saveInvoice(
+  db: SQLiteDatabase,
+  userId: string,
+  invoice: Invoice,
+): Promise<void> {
+  const { customerName, items, snapshotInvoice, totalAmount } =
+    prepareInvoicePayload(invoice);
   const now = new Date().toISOString();
 
   await db.withTransactionAsync(async () => {
-    const customerId = await findCustomerIdByName(db, userId, customerName);
-    if (!customerId) {
-      throw new SaveInvoiceError(
-        'Add this customer in the ledger before saving.',
-      );
-    }
-
-    for (const item of items) {
-      if (!(await findStockByName(db, userId, item.name))) {
-        throw new SaveInvoiceError(
-          `Add "${item.name}" to inventory before saving.`,
-        );
-      }
-    }
+    const customerId = await assertInvoiceDependencies(
+      db,
+      userId,
+      customerName,
+      items,
+    );
 
     await db.runAsync(
       'UPDATE customers SET balance_amount = balance_amount + ? WHERE id = ?',
@@ -556,23 +739,82 @@ export async function saveInvoice(
       serializeInvoiceSnapshot(snapshotInvoice),
     );
 
-    for (const item of items) {
-      await db.runAsync(
-        `INSERT INTO invoice_items (
-           id, invoice_id, name, quantity, discount_percent,
-           price_per_item, discount_amount
-         ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        newId(),
-        invoiceId,
-        item.name,
-        item.quantity,
-        item.discountPercent,
-        item.pricePerItem,
-        item.discountAmount,
-      );
+    await insertInvoiceItems(db, userId, invoiceId, items);
+  });
+}
 
-      await applyStockSale(db, userId, item.name, item.quantity ?? 0);
+export async function updateInvoice(
+  db: SQLiteDatabase,
+  userId: string,
+  invoiceId: string,
+  invoice: Invoice,
+): Promise<void> {
+  const { customerName, items, snapshotInvoice, totalAmount } =
+    prepareInvoicePayload(invoice);
+
+  await db.withTransactionAsync(async () => {
+    const existing = await db.getFirstAsync<{
+      customer_id: string;
+      total_amount: number;
+    }>(
+      `SELECT customer_id, total_amount
+       FROM invoices
+       WHERE id = ? AND user_id = ?`,
+      invoiceId,
+      userId,
+    );
+    if (!existing) {
+      throw new SaveInvoiceError('Could not update this invoice.');
     }
+
+    const customerId = await assertInvoiceDependencies(
+      db,
+      userId,
+      customerName,
+      items,
+    );
+
+    const oldItems = await db.getAllAsync<{
+      name: string;
+      quantity: number | null;
+    }>(
+      `SELECT name, quantity FROM invoice_items WHERE invoice_id = ?`,
+      invoiceId,
+    );
+    for (const item of oldItems) {
+      await restoreStockSale(db, userId, item.name, item.quantity ?? 0);
+    }
+
+    await db.runAsync(
+      'UPDATE customers SET balance_amount = balance_amount - ? WHERE id = ?',
+      existing.total_amount,
+      existing.customer_id,
+    );
+    await db.runAsync(
+      'UPDATE customers SET balance_amount = balance_amount + ? WHERE id = ?',
+      totalAmount,
+      customerId,
+    );
+
+    await db.runAsync(
+      `UPDATE invoices
+       SET customer_id = ?, customer_name = ?, total_amount = ?,
+           invoice_date = ?, discount_percent = ?, discount_amount = ?,
+           snapshot = ?
+       WHERE id = ? AND user_id = ?`,
+      customerId,
+      customerName,
+      totalAmount,
+      invoiceDateToIso(invoice.invoiceDate),
+      invoice.invoiceDiscountPercent,
+      invoice.invoiceDiscountAmount,
+      serializeInvoiceSnapshot(snapshotInvoice),
+      invoiceId,
+      userId,
+    );
+
+    await db.runAsync('DELETE FROM invoice_items WHERE invoice_id = ?', invoiceId);
+    await insertInvoiceItems(db, userId, invoiceId, items);
   });
 }
 

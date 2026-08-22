@@ -72,6 +72,9 @@ export const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     elevation: 2,
   },
+  cardPressed: {
+    opacity: 0.7,
+  },
   topRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
